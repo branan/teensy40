@@ -33,7 +33,7 @@ SECTIONS
         /* We define the boot stack position here, since Rust makes it
 	hard to mix function pointers and integers in a single
 	array. */
-	_boot_stack = ORIGIN(RAM) + SIZEOF(RAM);
+	_boot_stack = 0x20010000;
 
 	/DISCARD/ : {
                 *(.ARM.exidx)
