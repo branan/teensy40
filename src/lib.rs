@@ -4,3 +4,5 @@
 
 mod bootdata;
 mod startup;
+
+pub mod debug;
