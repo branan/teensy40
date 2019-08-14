@@ -1,3 +1,9 @@
+//! Clock Controller Module
+//!
+//! The CCM (Clock Controller Module) manages the 7 PLLs, as well as
+//! various clock selection muxes and all the individual device clock
+//! gates.
+
 use bit_field::BitField;
 use core::sync::atomic::{AtomicBool, Ordering};
 use volatile::{ReadOnly, Volatile};
@@ -31,22 +37,64 @@ struct CcmRegs {
     cmeor: Volatile<u32>,
 }
 
+/// The ARM PLL (PLL1)
+///
+/// This PLL can only be used as the clock source for the ARM core and
+/// adjacent peripherals. It is typically used as the source for
+/// `AHB_CLK_ROOT`, `IPG_CLK_ROOT`, and `PERCLK_CLK_ROOT`.
 pub struct ArmPll<'a> {
     ccm: &'a mut Ccm,
 }
 
+/// The `PRE_PERIHP_CLK_SEL` clock mux
+///
+/// This mux selects one of four clocks to be fed into the glitchless
+/// [`PERIPH_CLK_SEL` mux](PeriphClockSelector) for the ARM core
+/// clocks. See [the associated enum](PrePeriphClockInput) for details
+/// on the possible clock sources.
 pub struct PrePeriphClockSelector<'a> {
     ccm: &'a mut Ccm,
 }
 
+/// The `PERIPH_CLK2_SEL` clock mux
+///
+/// This mux selects one of three clocks to be fed into the glitchless
+/// [`PERIPH_CLK_SEL` mux](PeriphClockSelector) for the ARM core
+/// clocks. See [the associated enum](PeriphClock2Input) for details
+/// on the possible clock sources.
+///
+/// This should logically be called `PrePeriphClock2Selector`, but is
+/// not for consistency with NXP's documentation.
 pub struct PeriphClock2Selector<'a> {
     ccm: &'a mut Ccm,
 }
 
+/// The `PERIPH_CLK_SEL` clock mux.
+///
+/// This mux selects the output of either
+/// [`PRE_PERIPH_CLK_SEL`](PrePeriphClockSelector) or
+/// [`PERIPH_CLK2_SEL`](PeriphClock2Selector) as the source for the
+/// ARM core clocks. This is the final mux in the chain for
+/// `AHB_CLK_ROOT` and `IPG_CLK_ROOT`, as well as the primary clock
+/// source for `PERCLK_CLK_ROOT`. See [the associated
+/// enum](PeriphClockInput) for details on the possible clock sources.
+///
+/// Since the muxes which feed into this one are not glitchless,
+/// making any changes to those muxes requires this mux be pointed to
+/// the other input. For example, changing the input source of
+/// [`PRE_PERIPH_CLK_SEL`](PrePeriphClockSelector) will require this
+/// mux be set to [`PeriphClockInput::PeriphClock2`]
+///
+/// Because this is a glitchless mux, setting its input source does
+/// not require disabling downstream consumers.
 pub struct PeriphClockSelector<'a> {
     ccm: &'a mut Ccm,
 }
 
+/// The Clock Controller Module
+///
+/// This struct provides access to the various clocking components of
+/// the system. See the [module level documentation](index.html)  for details.
 pub struct Ccm {
     regs: &'static mut CcmRegs,
 }
@@ -62,6 +110,7 @@ pub enum ClockState {
     On,
 }
 
+#[doc(hidden)]
 impl core::convert::From<ClockState> for u32 {
     fn from(state: ClockState) -> u32 {
         match state {
@@ -72,19 +121,37 @@ impl core::convert::From<ClockState> for u32 {
     }
 }
 
+/// Indicates an error occured while trying to retrieve a clocking
+/// subsystem
 #[derive(Debug)]
 pub enum ClockError {
+    /// Indicates that the clock component is in use, and thus cannot
+    /// be modified.
     InUse,
 }
 
+/// The clock source used by the [`PRE_PERIPH_CLK_SEL`
+/// mux](PrePeriphClockSelector).
 #[derive(PartialEq, Copy, Clone)]
 pub enum PrePeriphClockInput {
+    /// The [`ArmPll`] output. This PLL can only be accessed through
+    /// this clock mux.
     ArmPll,
+
+    /// The [`SystemPll`] output. This Pll is typically also used for
+    /// most peripherals on the package.
     SystemPll,
+
+    /// The [`SystemPll`] phased fractional divider output. This
+    /// divides the `SystemPll` to a slightly lower frequency.
     SystemPllPfd0,
+
+    /// The [`SystemPll`] phased fractional divider output. This
+    /// divides the `SystemPll` to a slightly lower frequency.
     SystemPllPfd2,
 }
 
+#[doc(hidden)]
 impl From<u32> for PrePeriphClockInput {
     fn from(v: u32) -> PrePeriphClockInput {
         match v {
@@ -97,6 +164,7 @@ impl From<u32> for PrePeriphClockInput {
     }
 }
 
+#[doc(hidden)]
 impl From<PrePeriphClockInput> for u32 {
     fn from(v: PrePeriphClockInput) -> u32 {
         match v {
@@ -108,13 +176,24 @@ impl From<PrePeriphClockInput> for u32 {
     }
 }
 
+/// The clock input for the [`PERIPH_CLK2_SEL` mux](PeriphClock2Selector).
 #[derive(PartialEq, Copy, Clone)]
 pub enum PeriphClock2Input {
+    /// The [`SystemPll`] bypass source. On a Teensy, this is always
+    /// the 24MHz oscillator since the external clock pins are not
+    /// used. Choosing this instead of
+    /// [`Oscillator`](#variant.Oscillator) below will block the
+    /// [`SystemPll`] from being modified.
     SystemPllBypass,
+
+    /// [`Usb1Pll`], the clock for the first USB device.
     Usb1Pll,
+
+    /// The 24MHz oscillator.
     Oscillator,
 }
 
+#[doc(hidden)]
 impl From<u32> for PeriphClock2Input {
     fn from(v: u32) -> PeriphClock2Input {
         match v {
@@ -126,6 +205,7 @@ impl From<u32> for PeriphClock2Input {
     }
 }
 
+#[doc(hidden)]
 impl From<PeriphClock2Input> for u32 {
     fn from(v: PeriphClock2Input) -> u32 {
         match v {
@@ -136,12 +216,16 @@ impl From<PeriphClock2Input> for u32 {
     }
 }
 
+/// The clock input for the [`PERIPH_CLK_SEL` mux](PeriphClockSelector).
 #[derive(PartialEq, Copy, Clone)]
 pub enum PeriphClockInput {
+    /// The clock is sourced from [`PRE_PERIPH_CLK_SEL`](PrePeriphClockSelector).
     PrePeriphClock,
+    /// The clock is sourced from [`PERIPH_CLK2_SEL`](PeriphClock2Selector).
     PeriphClock2,
 }
 
+#[doc(hidden)]
 impl From<u32> for PeriphClockInput {
     fn from(v: u32) -> PeriphClockInput {
         match v {
@@ -152,6 +236,7 @@ impl From<u32> for PeriphClockInput {
     }
 }
 
+#[doc(hidden)]
 impl From<PeriphClockInput> for u32 {
     fn from(v: PeriphClockInput) -> u32 {
         match v {
@@ -162,11 +247,13 @@ impl From<PeriphClockInput> for u32 {
 }
 
 impl PeriphClockSelector<'_> {
+    /// Query the current clock source used by this mux
     pub fn input(&self) -> PeriphClockInput {
         // cbcdr[periph_clk_sel]
         unsafe { self.ccm.regs.cbcdr.read().get_bits(25..26).into() }
     }
 
+    /// Set the clock source used for this mux.
     pub fn set_input(&mut self, input: PeriphClockInput) {
         unsafe {
             self.ccm.regs.cbcdr.update(|r| {
@@ -184,11 +271,13 @@ impl PeriphClockSelector<'_> {
 }
 
 impl PeriphClock2Selector<'_> {
+    /// Query the current clock source used by this mux
     pub fn input(&self) -> PeriphClock2Input {
         // cbcmr[periph_clk2_sel]
         unsafe { self.ccm.regs.cbcmr.read().get_bits(12..14).into() }
     }
 
+    /// Set the clock source used for this mux.
     pub fn set_input(&mut self, input: PeriphClock2Input) {
         unsafe {
             self.ccm.regs.cbcmr.update(|r| {
@@ -206,11 +295,13 @@ impl PeriphClock2Selector<'_> {
 }
 
 impl PrePeriphClockSelector<'_> {
+    /// Query the current clock source used by this mux
     pub fn input(&self) -> PrePeriphClockInput {
         // cbcmr[pre_periph_clk_sel]
         unsafe { self.ccm.regs.cbcmr.read().get_bits(18..20).into() }
     }
 
+    /// Set the clock source used by this mux
     pub fn set_input(&mut self, input: PrePeriphClockInput) {
         unsafe {
             self.ccm.regs.cbcmr.update(|r| {
@@ -233,6 +324,10 @@ impl Ccm {
         Ccm { regs }
     }
 
+    /// Get the [`ArmPll`] for modification.
+    ///
+    /// # Errors
+    /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
     pub fn arm_pll(&mut self) -> Result<ArmPll, ClockError> {
         if self.pre_periph_clock_selector()?.input() == PrePeriphClockInput::ArmPll
             && self.periph_clock_selector().input() == PeriphClockInput::PrePeriphClock
@@ -243,10 +338,17 @@ impl Ccm {
         }
     }
 
+    /// Get the [`PERIPH_CLK_SEL` mux](PeriphClockSelector)
+    ///
+    /// Since this is a glitchless mux, this method cannot error.
     pub fn periph_clock_selector(&mut self) -> PeriphClockSelector {
         PeriphClockSelector { ccm: self }
     }
 
+    /// Get the [`PERIPH_CLK2_SEL` mux](PeriphClock2Selector)
+    ///
+    /// # Errors
+    /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
     pub fn periph_clock2_selector(&mut self) -> Result<PeriphClock2Selector, ClockError> {
         if self.periph_clock_selector().input() != PeriphClockInput::PeriphClock2 {
             Ok(PeriphClock2Selector { ccm: self })
@@ -255,6 +357,10 @@ impl Ccm {
         }
     }
 
+    /// Get the [`PRE_PERIPH_CLK_SEL` mux](PrePeriphClockSelector)
+    ///
+    /// # Errors
+    /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
     pub fn pre_periph_clock_selector(&mut self) -> Result<PrePeriphClockSelector, ClockError> {
         if self.periph_clock_selector().input() != PeriphClockInput::PrePeriphClock {
             Ok(PrePeriphClockSelector { ccm: self })
@@ -270,10 +376,14 @@ impl Ccm {
     /// * Points remaning clocks at a safe default (typically, the 24MHz crystal oscillator)
     /// * Disables all PLLs
     ///
-    /// This is unsafe because it forcibly disables all clock gates.
+    /// # Safety
+    /// This method will forcibly shut down all clock gates, which
+    /// renders any outstanding references to hardware modules unsafe
+    /// to use. It should only be used early during hardware bringup.
     ///
-    /// This will panic if it cannot gain access to the peripheral
-    /// objects it needs to do its job.
+    /// # Panics
+    /// This method will panic if it can't figure out how to disable
+    /// all its clocks.
     pub unsafe fn sanitize(&mut self) {
         // TODO: Disable as many clock gates as we can here.
 
@@ -288,11 +398,4 @@ impl Ccm {
             .set_input(PeriphClockInput::PeriphClock2);
         super::debug::progress();
     }
-
-    // unsafe fn set_clock_gate(&self, reg: usize, field: usize, state: ClockState) {
-    //     let val = state.into();
-    //     self.regs.ccgr[reg].update(|r| {
-    //         r.set_bits((field*2)..(field*2+2), state.into())
-    //     });
-    // }
 }

@@ -11,9 +11,10 @@ feature.
 ## Limitations
 
 * Code runs only off of flash (as does `.rodata`)
-* No abstractions - all registers must be accessed directly via pointers
-* No `.data` section, since we cannot copy the initialization data in yet
-* RAM is used for `.bss`, but is not yet zero-initialized
+* Pretty much no abstractions - most registers must be accessed
+  directly via pointers
+* No `.data` section, since we cannot copy the initialization data in
+  yet
 * Cannot be used as a dependency crate
 
 ## Dependencies
@@ -54,7 +55,6 @@ There are also some remaining memory management bits that need doing:
 
 * ITCM and DTCM setup
 * Copying code/data into correct memories
-* BSS zero-initialization
 * A heap
 
 Lastly, a Cargo `build.rs` script needs to be written so that we force
