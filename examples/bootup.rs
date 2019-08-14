@@ -9,7 +9,13 @@ use teensy40::debug;
 #[no_mangle]
 pub extern "C" fn main() {
     unsafe { debug::enable() }
-    unsafe { debug::pin(12) }
+
+    let mut ccm = teensy40::ccm::Ccm::new();
+
+    unsafe {
+        ccm.sanitize();
+        debug::pin12();
+    }
 
     // Sleep forever
     loop {
@@ -23,7 +29,7 @@ pub extern "C" fn main() {
 fn teensy_panic(_: &core::panic::PanicInfo) -> ! {
     // Enable the pin
     unsafe {
-        debug::pin(13);
+        debug::led();
         loop {
             asm!("wfi" : : : : "volatile");
         }

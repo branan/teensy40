@@ -1,8 +1,9 @@
 #![no_builtins]
 #![no_std]
-#![feature(const_transmute)]
+#![feature(asm, const_transmute, no_more_cas)]
 
 mod bootdata;
 mod startup;
 
+pub mod ccm;
 pub mod debug;
