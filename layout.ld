@@ -26,9 +26,12 @@ SECTIONS
 	.bss ALIGN(4) : {
 		*(.bss*)
 		*(COMMON)
-	} > RAM
+	} > DTCM
 
 	_image_length = SIZEOF(.text.progmem);
+
+	_bss_start = ADDR(.bss);
+	_bss_end = ADDR(.bss) + SIZEOF(.bss);
 
         /* We define the boot stack position here, since Rust makes it
 	hard to mix function pointers and integers in a single
