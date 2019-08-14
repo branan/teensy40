@@ -6,12 +6,11 @@
 extern crate teensy40;
 use teensy40::debug;
 
-
 #[no_mangle]
 pub extern "C" fn main() {
-    unsafe { debug::enable(); }
-
+    unsafe { debug::enable() }
     unsafe { debug::pin(12) }
+
     // Sleep forever
     loop {
         unsafe {

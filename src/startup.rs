@@ -15,10 +15,10 @@ pub extern "C" fn startup() {
 fn init_bss() {
     unsafe {
         let mut ptr = &_bss_start as *const u8 as *mut u8;
-        let end = &_bss_end as *const u8 as  *mut u8;
+        let end = &_bss_end as *const u8 as *mut u8;
         while ptr != end {
             core::ptr::write_volatile(ptr, 0);
-            ptr = (ptr as usize +1) as *mut u8;
+            ptr = (ptr as usize + 1) as *mut u8;
         }
     }
 }

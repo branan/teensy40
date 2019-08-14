@@ -5,10 +5,10 @@
 pub unsafe fn enable() {
     // Switch from GPIO2 to GPIO 7
     let reg = 0x400A_C06C as *mut u32;
-    unsafe { core::ptr::write_volatile(reg, 0xFFFF_FFFF) };
+    core::ptr::write_volatile(reg, 0xFFFF_FFFF);
     // Set GPIO to output mode
     let reg = 0x4200_4004 as *mut u32;
-    unsafe { core::ptr::write_volatile(reg, 0xFFFF_FFFF) };
+    core::ptr::write_volatile(reg, 0xFFFF_FFFF);
 }
 
 /// Enable a debug pin
@@ -17,10 +17,10 @@ pub unsafe fn enable() {
 pub unsafe fn pin(pin: u32) {
     let reg = 0x4200_4084 as *mut u32;
     if pin == 12 {
-        unsafe { core::ptr::write_volatile(reg, 1 << 1) };
+        core::ptr::write_volatile(reg, 1 << 1);
     } else if pin == 13 {
-        unsafe { core::ptr::write_volatile(reg, 1 << 3) };
-    } {
+        core::ptr::write_volatile(reg, 1 << 3);
+    } else {
         // Do nothing
     }
 }
