@@ -37,6 +37,46 @@ struct CcmRegs {
     cmeor: Volatile<u32>,
 }
 
+// TODO: This should be broken out into a common way to access
+// registers like this across different hardware modules.
+struct SegmentedRegister {
+    _val: Volatile<u32>,
+    set: Volatile<u32>,
+    clear: Volatile<u32>,
+    _toggle: Volatile<u32>,
+}
+
+#[repr(C, packed)]
+struct CcmAnalogRegs {
+    pll_arm: SegmentedRegister,
+    pll_usb1: SegmentedRegister,
+    pll_usb2: SegmentedRegister,
+    pll_sys: SegmentedRegister,
+    pll_sys_ss: Volatile<u32>,
+    _pad0: [u32; 3],
+    pll_sys_num: Volatile<u32>,
+    _pad1: [u32; 3],
+    pll_sys_denom: Volatile<u32>,
+    _pad2: [u32; 3],
+    pll_audio: SegmentedRegister,
+    pll_audio_num: Volatile<u32>,
+    _pad3: [u32; 3],
+    pll_audio_denom: Volatile<u32>,
+    _pad4: [u32; 3],
+    pll_video: SegmentedRegister,
+    pll_video_num: Volatile<u32>,
+    _pad5: [u32; 3],
+    pll_video_denom: Volatile<u32>,
+    _pad6: [u32; 7],
+    pll_enet: SegmentedRegister,
+    pfd_480: SegmentedRegister,
+    pfd_528: SegmentedRegister,
+    _pad7: [u32; 16],
+    misc0: SegmentedRegister,
+    misc1: SegmentedRegister,
+    misc2: SegmentedRegister,
+}
+
 /// The ARM PLL (PLL1)
 ///
 /// This PLL can only be used as the clock source for the ARM core and
@@ -97,6 +137,7 @@ pub struct PeriphClockSelector<'a> {
 /// the system. See the [module level documentation](index.html)  for details.
 pub struct Ccm {
     regs: &'static mut CcmRegs,
+    analog: &'static mut CcmAnalogRegs,
 }
 
 /// The state of a clock gate
@@ -246,6 +287,20 @@ impl From<PeriphClockInput> for u32 {
     }
 }
 
+impl ArmPll<'_> {
+    /// Disables this PLL to conserve power
+    pub fn disable(&mut self) {
+        unsafe {
+            // [pll_arm[bypass]
+            self.ccm.analog.pll_arm.set.write(1 << 16);
+            // pll_arm[enable]
+            self.ccm.analog.pll_arm.clear.write(1 << 13);
+            // pll_arm[powerdown]
+            self.ccm.analog.pll_arm.set.write(1 << 12);
+        }
+    }
+}
+
 impl PeriphClockSelector<'_> {
     /// Query the current clock source used by this mux
     pub fn input(&self) -> PeriphClockInput {
@@ -315,13 +370,19 @@ impl PrePeriphClockSelector<'_> {
 static CCM_INIT: AtomicBool = AtomicBool::new(false);
 
 impl Ccm {
+    /// Grab the CCM
+    ///
+    /// # Panics
+    /// This will panic if there is an outstanding reference to the
+    /// CCM.
     pub fn new() -> Ccm {
         let was_init = CCM_INIT.swap(true, Ordering::Acquire);
         if was_init {
             panic!("Cannot initialize CCM: An instance is already outstanding");
         }
         let regs = unsafe { &mut *(0x400F_C000 as *mut CcmRegs) };
-        Ccm { regs }
+        let analog = unsafe { &mut *(0x400D_8000 as *mut CcmAnalogRegs) };
+        Ccm { regs, analog }
     }
 
     /// Get the [`ArmPll`] for modification.
@@ -372,9 +433,11 @@ impl Ccm {
     /// Sanitize the clocking environment to bring us to the safest, simplest configuration
     ///
     /// This does a number of things:
-    /// * Disables all clock gates that aren't strictly necessary for normal usage
-    /// * Points remaning clocks at a safe default (typically, the 24MHz crystal oscillator)
-    /// * Disables all PLLs
+    /// * Disables all clock gates that aren't strictly necessary for
+    ///   normal usage
+    /// * Points remaining clocks at a safe default (typically, the
+    ///   24MHz crystal oscillator)
+    /// * Disables all PLLs that it can
     ///
     /// # Safety
     /// This method will forcibly shut down all clock gates, which
@@ -385,7 +448,12 @@ impl Ccm {
     /// This method will panic if it can't figure out how to disable
     /// all its clocks.
     pub unsafe fn sanitize(&mut self) {
-        // TODO: Disable as many clock gates as we can here.
+        // The chip documentation claims every clock is enabled at
+        // reset. This is true, so far as it goes. However, the boot
+        // firmware will disable clocks to *most* of the peripherals,
+        // so there are only a few left for us to turn off
+        // here.
+        // TODO: actually turn off remaining clocks.
 
         // Swap the secondary core clock mux to the xtal
         self.periph_clock2_selector()
@@ -396,6 +464,9 @@ impl Ccm {
         // Move the core clock to the secondary mux
         self.periph_clock_selector()
             .set_input(PeriphClockInput::PeriphClock2);
+        super::debug::progress();
+
+        self.arm_pll().unwrap().disable();
         super::debug::progress();
     }
 }
