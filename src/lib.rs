@@ -50,3 +50,4 @@ mod startup;
 
 pub mod ccm;
 pub mod debug;
+pub mod lpuart;

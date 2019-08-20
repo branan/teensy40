@@ -131,6 +131,15 @@ pub struct PeriphClockSelector<'a> {
     ccm: &'a mut Ccm,
 }
 
+/// The 'UART_CLK_SEL` clock mux.
+///
+/// This mux selects the output of either the USB PLL 24MHz oscillator
+/// as the clock source for the UARTs. See [the associated
+/// enum](UartClockInput) for details on the possible clock sources.
+pub struct UartClockSelector<'a> {
+    ccm: &'a mut Ccm,
+}
+
 /// The Clock Controller Module
 ///
 /// This struct provides access to the various clocking components of
@@ -287,6 +296,71 @@ impl From<PeriphClockInput> for u32 {
     }
 }
 
+/// The clock input for the [`UART_CLK_SEL` mux](UartClockSelector)
+#[derive(PartialEq, Copy, Clone)]
+pub enum UartClockInput {
+    /// [`Usb1Pll`] divided by six, typically 80MHz
+    Usb1PllOverSix,
+    /// The 24MHz oscillator
+    Oscillator,
+}
+
+#[doc(hidden)]
+impl From<u32> for UartClockInput {
+    fn from(v: u32) -> UartClockInput {
+        match v {
+            0 => UartClockInput::Usb1PllOverSix,
+            1 => UartClockInput::Oscillator,
+            _ => panic!("Invalid value for the UartClkSel input"),
+        }
+    }
+}
+
+#[doc(hidden)]
+impl From<UartClockInput> for u32 {
+    fn from(v: UartClockInput) -> u32 {
+        match v {
+            UartClockInput::Usb1PllOverSix => 0,
+            UartClockInput::Oscillator => 1,
+        }
+    }
+}
+
+/// The various states a device's clock gate can be in
+#[derive(PartialEq, Copy, Clone)]
+pub enum ClockGate {
+    /// The device is always disabled
+    Disabled,
+    /// The device is always enabled
+    Enabled,
+    /// The device is only enabled when the package is in the full
+    /// awake state, and disabled during low power states.
+    EnabledDuringWake,
+}
+
+#[doc(hidden)]
+impl From<u32> for ClockGate {
+    fn from(v: u32) -> ClockGate {
+        match v {
+            0 => ClockGate::Disabled,
+            1 => ClockGate::EnabledDuringWake,
+            3 => ClockGate::Enabled,
+            _ => panic!("Invalid value for a clock gate"),
+        }
+    }
+}
+
+#[doc(hidden)]
+impl From<ClockGate> for u32 {
+    fn from(v: ClockGate) -> u32 {
+        match v {
+            ClockGate::Disabled => 0,
+            ClockGate::Enabled => 3,
+            ClockGate::EnabledDuringWake => 1,
+        }
+    }
+}
+
 impl ArmPll<'_> {
     /// Disables this PLL to conserve power
     pub fn disable(&mut self) {
@@ -367,6 +441,34 @@ impl PrePeriphClockSelector<'_> {
     }
 }
 
+impl UartClockSelector<'_> {
+    /// Query the current clock source used by this mux
+    pub fn input(&self) -> UartClockInput {
+        // cscdr1[uart_clk_sel]
+        unsafe { self.ccm.regs.cscdr1.read().get_bits(6..7).into() }
+    }
+
+    /// Set the clock source used by this mux
+    pub fn set_input(&mut self, input: UartClockInput) {
+        unsafe {
+            self.ccm.regs.cscdr1.update(|r| {
+                // cscdr1[uart_clk_sel]
+                r.set_bits(6..7, input.into());
+            });
+        }
+    }
+
+    /// Set the divisor for the clock used by this mux
+    pub fn set_divisor(&mut self, divisor: u32) {
+        unsafe {
+            self.ccm.regs.cscdr1.update(|r| {
+                // cscdr1[uart_clk_podf]
+                r.set_bits(0..6, divisor - 1);
+            });
+        }
+    }
+}
+
 static CCM_INIT: AtomicBool = AtomicBool::new(false);
 
 impl Ccm {
@@ -428,6 +530,47 @@ impl Ccm {
         } else {
             Err(ClockError::InUse)
         }
+    }
+
+    /// Get the [`UART_CLK_SEL` mux](UartClockSelector)
+    ///
+    /// # Errors
+    /// Returns [`ClockError::InUse`] if any UART clock gate is enabled.
+    pub fn uart_clock_selector(&mut self) -> Result<UartClockSelector, ClockError> {
+        const UART_CLOCK_GATES: [(usize, usize); 8] = [
+            (5, 12),
+            (0, 14),
+            (0, 6),
+            (1, 12),
+            (3, 1),
+            (3, 3),
+            (5, 13),
+            (6, 7),
+        ];
+
+        if UART_CLOCK_GATES
+            .iter()
+            .copied()
+            .map(|(reg, gate)| self.clock_gate(reg, gate))
+            .any(|gate| gate != ClockGate::Disabled)
+        {
+            Err(ClockError::InUse)
+        } else {
+            Ok(UartClockSelector { ccm: self })
+        }
+    }
+
+    /// Query the status of a clock gate
+    pub fn clock_gate(&self, reg: usize, gate: usize) -> ClockGate {
+        let gate_bits = (gate * 2)..(gate * 2 + 2);
+        unsafe { self.regs.ccgr[reg].read().get_bits(gate_bits).into() }
+    }
+
+    pub unsafe fn set_clock_gate(&mut self, reg: usize, gate: usize, state: ClockGate) {
+        let gate_bits = (gate * 2)..(gate * 2 + 2);
+        self.regs.ccgr[reg].update(|r| {
+            r.set_bits(gate_bits, state.into());
+        });
     }
 
     /// Sanitize the clocking environment to bring us to the safest, simplest configuration
