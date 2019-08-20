@@ -43,7 +43,7 @@
 
 #![no_builtins]
 #![no_std]
-#![feature(asm, const_transmute, no_more_cas)]
+#![feature(const_transmute)]
 
 mod bootdata;
 mod startup;

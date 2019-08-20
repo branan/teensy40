@@ -1,7 +1,7 @@
 #![no_builtins]
 #![no_main]
 #![no_std]
-#![feature(asm, const_transmute)]
+#![feature(asm)]
 
 extern crate teensy40;
 use teensy40::debug;

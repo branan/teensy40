@@ -1,3 +1,7 @@
+// While these *can* be done as casts, they're much more compact and
+// readable as transmutes
+#![allow(clippy::transmute_ptr_to_ptr)]
+
 use super::startup::startup;
 use core::mem::transmute;
 
