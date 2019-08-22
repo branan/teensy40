@@ -160,28 +160,6 @@ pub struct Ccm {
     analog: &'static mut CcmAnalogRegs,
 }
 
-/// The state of a clock gate
-#[derive(Copy, Clone)]
-pub enum ClockState {
-    /// The connected clock is always disabled
-    Off,
-    /// The connected clock is enabled when the package is in `run` mode, but disabled in `wait` or `stop` mode.
-    OnWhenAwake,
-    /// The connected clock is always enabled
-    On,
-}
-
-#[doc(hidden)]
-impl core::convert::From<ClockState> for u32 {
-    fn from(state: ClockState) -> u32 {
-        match state {
-            ClockState::Off => 0,
-            ClockState::OnWhenAwake => 1,
-            ClockState::On => 3,
-        }
-    }
-}
-
 /// Indicates an error occured while trying to retrieve a clocking
 /// subsystem
 #[derive(Debug)]
