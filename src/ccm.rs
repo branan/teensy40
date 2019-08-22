@@ -5,7 +5,10 @@
 //! gates.
 
 use bit_field::BitField;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use volatile::{ReadOnly, Volatile};
 
 #[repr(C, packed)]
@@ -40,7 +43,7 @@ struct CcmRegs {
 // TODO: This should be broken out into a common way to access
 // registers like this across different hardware modules.
 struct SegmentedRegister {
-    _val: Volatile<u32>,
+    val: Volatile<u32>,
     set: Volatile<u32>,
     clear: Volatile<u32>,
     _toggle: Volatile<u32>,
@@ -82,8 +85,16 @@ struct CcmAnalogRegs {
 /// This PLL can only be used as the clock source for the ARM core and
 /// adjacent peripherals. It is typically used as the source for
 /// `AHB_CLK_ROOT`, `IPG_CLK_ROOT`, and `PERCLK_CLK_ROOT`.
-pub struct ArmPll<'a> {
-    ccm: &'a mut Ccm,
+pub struct ArmPll<CCM> {
+    ccm: CCM,
+}
+
+/// The First USB PLL (PLL3)
+///
+/// This PLL is used as the clock source for the first USB phy, as
+/// well as being an optional clock reference for many peripherals.
+pub struct Usb1Pll<CCM> {
+    ccm: CCM,
 }
 
 /// The `PRE_PERIHP_CLK_SEL` clock mux
@@ -92,8 +103,8 @@ pub struct ArmPll<'a> {
 /// [`PERIPH_CLK_SEL` mux](PeriphClockSelector) for the ARM core
 /// clocks. See [the associated enum](PrePeriphClockInput) for details
 /// on the possible clock sources.
-pub struct PrePeriphClockSelector<'a> {
-    ccm: &'a mut Ccm,
+pub struct PrePeriphClockSelector<CCM> {
+    ccm: CCM,
 }
 
 /// The `PERIPH_CLK2_SEL` clock mux
@@ -105,8 +116,8 @@ pub struct PrePeriphClockSelector<'a> {
 ///
 /// This should logically be called `PrePeriphClock2Selector`, but is
 /// not for consistency with NXP's documentation.
-pub struct PeriphClock2Selector<'a> {
-    ccm: &'a mut Ccm,
+pub struct PeriphClock2Selector<CCM> {
+    ccm: CCM,
 }
 
 /// The `PERIPH_CLK_SEL` clock mux.
@@ -127,8 +138,8 @@ pub struct PeriphClock2Selector<'a> {
 ///
 /// Because this is a glitchless mux, setting its input source does
 /// not require disabling downstream consumers.
-pub struct PeriphClockSelector<'a> {
-    ccm: &'a mut Ccm,
+pub struct PeriphClockSelector<CCM> {
+    ccm: CCM,
 }
 
 /// The 'UART_CLK_SEL` clock mux.
@@ -136,8 +147,8 @@ pub struct PeriphClockSelector<'a> {
 /// This mux selects the output of either the USB PLL 24MHz oscillator
 /// as the clock source for the UARTs. See [the associated
 /// enum](UartClockInput) for details on the possible clock sources.
-pub struct UartClockSelector<'a> {
-    ccm: &'a mut Ccm,
+pub struct UartClockSelector<CCM> {
+    ccm: CCM,
 }
 
 /// The Clock Controller Module
@@ -178,6 +189,9 @@ pub enum ClockError {
     /// Indicates that the clock component is in use, and thus cannot
     /// be modified.
     InUse,
+    /// Indicates that the clock gate configuration would lead to a
+    /// peripheral being overclocked.
+    TooFast,
 }
 
 /// The clock source used by the [`PRE_PERIPH_CLK_SEL`
@@ -361,7 +375,73 @@ impl From<ClockGate> for u32 {
     }
 }
 
-impl ArmPll<'_> {
+/// The possible multipliers for the core peripheral PLLs
+///
+/// These are the two multiplier values available for the [`Usb1Pll`],
+/// [`Usb2Pll`], and [`SystemPll`]
+#[derive(PartialEq, Copy, Clone)]
+pub enum PeripheralPllMultiplier {
+    Twenty,
+    TwentyTwo,
+}
+
+#[doc(hidden)]
+impl From<u32> for PeripheralPllMultiplier {
+    fn from(v: u32) -> PeripheralPllMultiplier {
+        match v {
+            0 => PeripheralPllMultiplier::Twenty,
+            1 => PeripheralPllMultiplier::TwentyTwo,
+            _ => panic!("Invalid value for PLL multiplier"),
+        }
+    }
+}
+
+#[doc(hidden)]
+impl From<PeripheralPllMultiplier> for u32 {
+    fn from(v: PeripheralPllMultiplier) -> u32 {
+        match v {
+            PeripheralPllMultiplier::Twenty => 0,
+            PeripheralPllMultiplier::TwentyTwo => 1,
+        }
+    }
+}
+
+/// Common trait for hardware modules which are clock-gated
+///
+/// This trait provides the necessary methods for the CCM management
+/// code to validate that clocking is correct for a module before
+/// handing that module to user code.
+///
+/// This should never have to be used in user code, and is public only
+/// because of rusts privates-in-public rules.
+pub trait ClockGated {
+    const GATE: (usize, usize);
+
+    /// Query the [`Ccm`] to determine if the clock path to this
+    /// device is enabled, and operating at a safe frequency for this
+    /// peripheral.
+    fn check_clock(ccm: &Ccm) -> Result<(), ClockError>;
+
+    /// Enable this device and return an instance
+    ///
+    /// # Safety
+    /// This must only be called if the device's clock gate is
+    /// enabled, and if the clock path leading to that gate is correct
+    /// for this peripheral.
+    unsafe fn enable() -> Self;
+
+    /// Disable this device, consuming it.
+    ///
+    /// Calling this directly is not recommended. Instead,
+    /// [`Ccm::disable`] should be called so that the associated clock
+    /// gate can be cleared.
+    fn disable(self);
+}
+
+impl<CCM> ArmPll<CCM>
+where
+    CCM: DerefMut + Deref<Target = Ccm>,
+{
     /// Disables this PLL to conserve power
     pub fn disable(&mut self) {
         unsafe {
@@ -375,13 +455,41 @@ impl ArmPll<'_> {
     }
 }
 
-impl PeriphClockSelector<'_> {
+impl<CCM> Usb1Pll<CCM>
+where
+    CCM: Deref<Target = Ccm>,
+{
+    pub fn multiplier(&self) -> PeripheralPllMultiplier {
+        unsafe {
+            // pll_usb1[[div_select]
+            self.ccm.analog.pll_usb1.val.read().get_bits(1..2).into()
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        unsafe {
+            // pll_usb1[power] && pll_usb1[enable]
+            self.ccm.analog.pll_usb1.val.read().get_bit(12)
+                && self.ccm.analog.pll_usb1.val.read().get_bit(13)
+        }
+    }
+}
+
+impl<CCM> PeriphClockSelector<CCM>
+where
+    CCM: Deref<Target = Ccm>,
+{
     /// Query the current clock source used by this mux
     pub fn input(&self) -> PeriphClockInput {
         // cbcdr[periph_clk_sel]
         unsafe { self.ccm.regs.cbcdr.read().get_bits(25..26).into() }
     }
+}
 
+impl<CCM> PeriphClockSelector<CCM>
+where
+    CCM: DerefMut + Deref<Target = Ccm>,
+{
     /// Set the clock source used for this mux.
     pub fn set_input(&mut self, input: PeriphClockInput) {
         unsafe {
@@ -399,13 +507,21 @@ impl PeriphClockSelector<'_> {
     }
 }
 
-impl PeriphClock2Selector<'_> {
+impl<CCM> PeriphClock2Selector<CCM>
+where
+    CCM: Deref<Target = Ccm>,
+{
     /// Query the current clock source used by this mux
     pub fn input(&self) -> PeriphClock2Input {
         // cbcmr[periph_clk2_sel]
         unsafe { self.ccm.regs.cbcmr.read().get_bits(12..14).into() }
     }
+}
 
+impl<CCM> PeriphClock2Selector<CCM>
+where
+    CCM: DerefMut + Deref<Target = Ccm>,
+{
     /// Set the clock source used for this mux.
     pub fn set_input(&mut self, input: PeriphClock2Input) {
         unsafe {
@@ -423,13 +539,21 @@ impl PeriphClock2Selector<'_> {
     }
 }
 
-impl PrePeriphClockSelector<'_> {
+impl<CCM> PrePeriphClockSelector<CCM>
+where
+    CCM: Deref<Target = Ccm>,
+{
     /// Query the current clock source used by this mux
     pub fn input(&self) -> PrePeriphClockInput {
         // cbcmr[pre_periph_clk_sel]
         unsafe { self.ccm.regs.cbcmr.read().get_bits(18..20).into() }
     }
+}
 
+impl<CCM> PrePeriphClockSelector<CCM>
+where
+    CCM: DerefMut + Deref<Target = Ccm>,
+{
     /// Set the clock source used by this mux
     pub fn set_input(&mut self, input: PrePeriphClockInput) {
         unsafe {
@@ -441,13 +565,29 @@ impl PrePeriphClockSelector<'_> {
     }
 }
 
-impl UartClockSelector<'_> {
+impl<CCM> UartClockSelector<CCM>
+where
+    CCM: Deref<Target = Ccm>,
+{
     /// Query the current clock source used by this mux
     pub fn input(&self) -> UartClockInput {
         // cscdr1[uart_clk_sel]
         unsafe { self.ccm.regs.cscdr1.read().get_bits(6..7).into() }
     }
 
+    /// Query the current post-divider for the UART clocks
+    pub fn divisor(&self) -> u32 {
+        unsafe {
+            // cscdr1[uart_clk_podf]
+            self.ccm.regs.cscdr1.read().get_bits(0..6) + 1
+        }
+    }
+}
+
+impl<CCM> UartClockSelector<CCM>
+where
+    CCM: DerefMut + Deref<Target = Ccm>,
+{
     /// Set the clock source used by this mux
     pub fn set_input(&mut self, input: UartClockInput) {
         unsafe {
@@ -487,12 +627,38 @@ impl Ccm {
         Ccm { regs, analog }
     }
 
-    /// Get the [`ArmPll`] for modification.
+    /// Enable a [`ClockGated`] hardware module.
+    ///
+    /// This will force the peripheral to be always on, even when the
+    /// package is in sleep mode. Sleeping certain peripherals is not
+    /// yet supported.
+    pub fn enable<T: ClockGated>(&mut self) -> Result<T, ClockError> {
+        unsafe {
+            let gate = <T as ClockGated>::GATE;
+            if self.clock_gate(gate) != ClockGate::Disabled {
+                Err(ClockError::InUse)
+            } else {
+                self.set_clock_gate(gate, ClockGate::Enabled);
+                Ok(<T as ClockGated>::enable())
+            }
+        }
+    }
+
+    /// Disable a [`ClockGated`] hardware module
+    pub fn disable<T: ClockGated>(&mut self, instance: T) {
+        unsafe {
+            let gate = <T as ClockGated>::GATE;
+            instance.disable();
+            self.set_clock_gate(gate, ClockGate::Disabled);
+        }
+    }
+
+    /// Get the [ARM PLL](ArmPll) mutably
     ///
     /// # Errors
     /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
-    pub fn arm_pll(&mut self) -> Result<ArmPll, ClockError> {
-        if self.pre_periph_clock_selector()?.input() == PrePeriphClockInput::ArmPll
+    pub fn arm_pll_mut(&mut self) -> Result<ArmPll<&mut Self>, ClockError> {
+        if self.pre_periph_clock_selector().input() == PrePeriphClockInput::ArmPll
             && self.periph_clock_selector().input() == PeriphClockInput::PrePeriphClock
         {
             Err(ClockError::InUse)
@@ -501,18 +667,30 @@ impl Ccm {
         }
     }
 
-    /// Get the [`PERIPH_CLK_SEL` mux](PeriphClockSelector)
-    ///
-    /// Since this is a glitchless mux, this method cannot error.
-    pub fn periph_clock_selector(&mut self) -> PeriphClockSelector {
+    /// Get the [USB1 PLL](Usb1Pll) immutably
+    pub fn usb1_pll(&self) -> Usb1Pll<&Self> {
+        Usb1Pll { ccm: self }
+    }
+
+    /// Get the [`PERIPH_CLK_SEL` mux](PeriphClockSelector) immutably
+    pub fn periph_clock_selector(&self) -> PeriphClockSelector<&Self> {
         PeriphClockSelector { ccm: self }
     }
 
-    /// Get the [`PERIPH_CLK2_SEL` mux](PeriphClock2Selector)
+    /// Get the [`PERIPH_CLK_SEL` mux](PeriphClockSelector) mutably
+    ///
+    /// Since this is a glitchless mux, this method cannot error.
+    pub fn periph_clock_selector_mut(&mut self) -> PeriphClockSelector<&mut Self> {
+        PeriphClockSelector { ccm: self }
+    }
+
+    /// Get the [`PERIPH_CLK2_SEL` mux](PeriphClock2Selector) mutably
     ///
     /// # Errors
     /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
-    pub fn periph_clock2_selector(&mut self) -> Result<PeriphClock2Selector, ClockError> {
+    pub fn periph_clock2_selector_mut(
+        &mut self,
+    ) -> Result<PeriphClock2Selector<&mut Self>, ClockError> {
         if self.periph_clock_selector().input() != PeriphClockInput::PeriphClock2 {
             Ok(PeriphClock2Selector { ccm: self })
         } else {
@@ -520,11 +698,18 @@ impl Ccm {
         }
     }
 
-    /// Get the [`PRE_PERIPH_CLK_SEL` mux](PrePeriphClockSelector)
+    /// Get the [`PRE_PERIPH_CLK_SEL` mux](PrePeriphClockSelector) immutably
+    pub fn pre_periph_clock_selector(&self) -> PrePeriphClockSelector<&Self> {
+        PrePeriphClockSelector { ccm: self }
+    }
+
+    /// Get the [`PRE_PERIPH_CLK_SEL` mux](PrePeriphClockSelector) mutably
     ///
     /// # Errors
     /// Returns [`ClockError::InUse`] if a downstream mux is using this clock source.
-    pub fn pre_periph_clock_selector(&mut self) -> Result<PrePeriphClockSelector, ClockError> {
+    pub fn pre_periph_clock_selector_mut(
+        &mut self,
+    ) -> Result<PrePeriphClockSelector<&mut Self>, ClockError> {
         if self.periph_clock_selector().input() != PeriphClockInput::PrePeriphClock {
             Ok(PrePeriphClockSelector { ccm: self })
         } else {
@@ -532,11 +717,16 @@ impl Ccm {
         }
     }
 
-    /// Get the [`UART_CLK_SEL` mux](UartClockSelector)
+    /// Get the [`UART_CLK_SEL` mux](UartClockSelector) immutably
+    pub fn uart_clock_selector(&self) -> UartClockSelector<&Self> {
+        UartClockSelector { ccm: self }
+    }
+
+    /// Get the [`UART_CLK_SEL` mux](UartClockSelector) mutably
     ///
     /// # Errors
     /// Returns [`ClockError::InUse`] if any UART clock gate is enabled.
-    pub fn uart_clock_selector(&mut self) -> Result<UartClockSelector, ClockError> {
+    pub fn uart_clock_selector_mut(&mut self) -> Result<UartClockSelector<&mut Self>, ClockError> {
         const UART_CLOCK_GATES: [(usize, usize); 8] = [
             (5, 12),
             (0, 14),
@@ -551,7 +741,7 @@ impl Ccm {
         if UART_CLOCK_GATES
             .iter()
             .copied()
-            .map(|(reg, gate)| self.clock_gate(reg, gate))
+            .map(|gate| self.clock_gate(gate))
             .any(|gate| gate != ClockGate::Disabled)
         {
             Err(ClockError::InUse)
@@ -561,14 +751,20 @@ impl Ccm {
     }
 
     /// Query the status of a clock gate
-    pub fn clock_gate(&self, reg: usize, gate: usize) -> ClockGate {
-        let gate_bits = (gate * 2)..(gate * 2 + 2);
-        unsafe { self.regs.ccgr[reg].read().get_bits(gate_bits).into() }
+    pub fn clock_gate(&self, gate: (usize, usize)) -> ClockGate {
+        let gate_bits = (gate.1 * 2)..(gate.1 * 2 + 2);
+        unsafe { self.regs.ccgr[gate.0].read().get_bits(gate_bits).into() }
     }
 
-    pub unsafe fn set_clock_gate(&mut self, reg: usize, gate: usize, state: ClockGate) {
-        let gate_bits = (gate * 2)..(gate * 2 + 2);
-        self.regs.ccgr[reg].update(|r| {
+    /// Toggle the status of a clock gate
+    ///
+    /// # Safety
+    /// * The clock for a device must not be disabled if the device is in use
+    /// * The clock gate for a device must only be enabled if the
+    ///   clock path leading to the gate is safe for the device.
+    pub unsafe fn set_clock_gate(&mut self, gate: (usize, usize), state: ClockGate) {
+        let gate_bits = (gate.1 * 2)..(gate.1 * 2 + 2);
+        self.regs.ccgr[gate.0].update(|r| {
             r.set_bits(gate_bits, state.into());
         });
     }
@@ -599,17 +795,17 @@ impl Ccm {
         // TODO: actually turn off remaining clocks.
 
         // Swap the secondary core clock mux to the xtal
-        self.periph_clock2_selector()
+        self.periph_clock2_selector_mut()
             .unwrap()
             .set_input(PeriphClock2Input::Oscillator);
         super::debug::progress();
 
         // Move the core clock to the secondary mux
-        self.periph_clock_selector()
+        self.periph_clock_selector_mut()
             .set_input(PeriphClockInput::PeriphClock2);
         super::debug::progress();
 
-        self.arm_pll().unwrap().disable();
+        self.arm_pll_mut().unwrap().disable();
         super::debug::progress();
     }
 }
