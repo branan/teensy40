@@ -589,6 +589,12 @@ where
 
 static CCM_INIT: AtomicBool = AtomicBool::new(false);
 
+impl Drop for Ccm {
+    fn drop(&mut self) {
+        CCM_INIT.swap(false, Ordering::Release);
+    }
+}
+
 impl Ccm {
     /// Grab the CCM
     ///
@@ -765,25 +771,74 @@ impl Ccm {
     /// This method will panic if it can't figure out how to disable
     /// all its clocks.
     pub unsafe fn sanitize(&mut self) {
-        // The chip documentation claims every clock is enabled at
-        // reset. This is true, so far as it goes. However, the boot
-        // firmware will disable clocks to *most* of the peripherals,
-        // so there are only a few left for us to turn off
-        // here.
-        // TODO: actually turn off remaining clocks.
+        // Clocks to preserve. Most of these are related to internal
+        // busses or the ARM core itself. All the external memory
+        // interfaces are preserved, since I'm not sure which one the
+        // NOR flash it on.
+        let preserved_gates = [
+            (0, 0),  // aips_tz1
+            (0, 1),  // aips_tz2
+            (0, 3),  // reserved
+            (0, 4),  // sim_m_mainclk_r
+            (1, 9),  // semc_exsc
+            (1, 14), // csu
+            (2, 0),  // ocram_exsc
+            (2, 2),  // iomuxc_snvs
+            (2, 6),  // iim / ocotp_ctrl
+            (2, 8),  // ipmux1
+            (2, 9),  // ipmux2
+            (2, 10), // ipmux3
+            (3, 9),  // flexram
+            (3, 14), // ocram
+            (3, 15), // iomuxc_snvs_gpr
+            (4, 0),  // sim_m7_mainclk_r
+            (4, 1),  // iomuxc
+            (4, 2),  // iomuxc_gpr
+            (4, 3),  // bee
+            (4, 4),  // sim_m7
+            (4, 6),  // sim_m
+            (4, 7),  // sim_ems
+            (5, 6),  // aips_tz4
+            (5, 8),  // sim_main
+            (5, 14), // snvs_hp
+            (5, 15), // snvs_lp
+            (6, 3),  // dcdc
+            (6, 4),  // ipmux4
+            (6, 5),  // flexspi
+            (6, 9),  // aips_tz3,
+            (6, 10), // sim_axbs_p
+            (6, 11), // anadig
+            (7, 1),  // flexspi2
+            (7, 2),  // axbs_l
+            (7, 5),  // aips_lite
+            (7, 7),  // reserved
+            (7, 8),  // reserved
+            (7, 9),  // reserved
+            (7, 10), // reserved
+            (7, 11), // reserved
+            (7, 12), // reserved
+            (7, 13), // reserved
+            (7, 14), // reserved
+            (7, 15), // reserved
+        ];
+
+        for reg in 0..8 {
+            for gate in 0..15 {
+                if !preserved_gates.contains(&(reg, gate)) {
+                    self.set_clock_gate((reg, gate), ClockGate::Disabled);
+                }
+            }
+        }
 
         // Swap the secondary core clock mux to the xtal
         self.periph_clock2_selector_mut()
             .unwrap()
             .set_input(PeriphClock2Input::Oscillator);
-        super::debug::progress();
 
         // Move the core clock to the secondary mux
         self.periph_clock_selector_mut()
             .set_input(PeriphClockInput::PeriphClock2);
-        super::debug::progress();
 
         self.arm_pll_mut().unwrap().disable();
-        super::debug::progress();
     }
 }

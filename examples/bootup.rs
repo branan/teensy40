@@ -12,10 +12,6 @@ pub extern "C" fn main() {
 
     let mut ccm = ccm::Ccm::new();
 
-    unsafe {
-        ccm.sanitize();
-    }
-
     let mut uart_clock = ccm.uart_clock_selector_mut().unwrap();
     uart_clock.set_input(ccm::UartClockInput::Oscillator);
     uart_clock.set_divisor(1);
