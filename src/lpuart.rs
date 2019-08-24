@@ -18,12 +18,17 @@ struct LpUartRegs {
 }
 
 macro_rules! uart {
-    ($name:ident, $gate:expr, $addr:expr) => {
-        pub struct $name {
+    ($name:ident, $tx_pin:ident, $rx_pin:ident, $gate:expr, $addr:expr) => {
+        pub struct $name<T, R> {
             regs: &'static mut LpUartRegs,
+            tx: T,
+            rx: R,
         }
 
-        impl super::ccm::ClockGated for $name {
+        pub trait $tx_pin {}
+        pub trait $rx_pin {}
+
+        impl super::ccm::ClockGated for $name<(), ()> {
             const GATE: (usize, usize) = $gate;
 
             fn check_clock(ccm: &super::ccm::Ccm) -> Result<(), super::ccm::ClockError> {
@@ -46,7 +51,8 @@ macro_rules! uart {
                             Err(ClockError::Disabled)
                         } else {
                             if ccm.usb1_pll().multiplier() == PeripheralPllMultiplier::TwentyTwo
-                            && ccm.uart_clock_selector().divisor() == 1 {
+                                && ccm.uart_clock_selector().divisor() == 1
+                            {
                                 Err(ClockError::TooFast)
                             } else {
                                 Ok(())
@@ -58,36 +64,63 @@ macro_rules! uart {
 
             unsafe fn enable() -> Self {
                 let regs = &mut *($addr as *mut LpUartRegs);
-                $name { regs }
+                $name {
+                    regs,
+                    tx: (),
+                    rx: (),
+                }
             }
 
             fn disable(self) {}
         }
 
-        impl $name {
+        impl $name<(), ()> {
             /// Set the baud rate
-            ///
-            /// # Safety
-            /// Does not check if the transmitter or reciever are enabled.
-            pub unsafe fn set_clocks(&mut self, divisor: u32, oversample: u32) {
-                self.regs.baud.update(|r| {
-                    // baud[osr]
-                    r.set_bits(24..29, oversample - 1);
-                    r.set_bits(0..13, divisor);
-                });
+            pub fn set_clocks(&mut self, divisor: u32, oversample: u32) {
+                unsafe {
+                    self.regs.baud.update(|r| {
+                        // baud[osr]
+                        r.set_bits(24..29, oversample - 1);
+                        r.set_bits(0..13, divisor);
+                    });
+                }
+            }
+        }
+
+        impl<T, R> $name<T, R> {
+            pub fn set_tx<Tx>(self, tx: Tx) -> ($name<Tx, R>, T)
+            where
+                Tx: $tx_pin,
+            {
+                let regs = self.regs;
+                let rx = self.rx;
+                let old_tx = self.tx;
+
+                unsafe {
+                    regs.ctrl.update(|r| {
+                        // ctrl[te]
+                        r.set_bit(19, true);
+                    });
+                }
+
+                ($name { regs, tx, rx }, old_tx)
             }
 
-            /// Enable the transmitter
-            ///
-            /// # Safety
-            /// Does not validate any pin configuration
-            pub unsafe fn enable(&mut self) {
-                self.regs.ctrl.update(|r| {
-                    // ctrl[te]
-                    r.set_bit(19, true);
-                });
+            pub fn set_rx<Rx>(self, rx: Rx) -> ($name<T, Rx>, R)
+            where
+                Rx: $rx_pin,
+            {
+                let regs = self.regs;
+                let tx = self.tx;
+                let old_rx = self.rx;
+                ($name { regs, tx, rx }, old_rx)
             }
+        }
 
+        impl<T, R> $name<T, R>
+        where
+            T: $tx_pin,
+        {
             pub fn send(&mut self, byte: u8) {
                 unsafe {
                     self.regs.data.write(u32::from(byte));
@@ -99,7 +132,10 @@ macro_rules! uart {
             }
         }
 
-        impl core::fmt::Write for $name {
+        impl<T, R> core::fmt::Write for $name<T, R>
+        where
+            T: $tx_pin,
+        {
             fn write_str(&mut self, s: &str) -> core::fmt::Result {
                 for b in s.bytes() {
                     self.send(b);
@@ -110,11 +146,11 @@ macro_rules! uart {
     };
 }
 
-uart!(LpUart1, (5, 12), 0x4018_4000);
-uart!(LpUart2, (0, 14), 0x4018_8000);
-uart!(LpUart3, (0, 6), 0x4018_C000);
-uart!(LpUart4, (1, 12), 0x4019_0000);
-uart!(LpUart5, (3, 1), 0x4019_4000);
-uart!(LpUart6, (3, 3), 0x4019_8000);
-uart!(LpUart7, (5, 13), 0x4019_C000);
-uart!(LpUart8, (6, 7), 0x401A_0000);
+uart!(LpUart1, LpUart1Tx, LpUart1Rx, (5, 12), 0x4018_4000);
+uart!(LpUart2, LpUart2Tx, LpUart2Rx, (0, 14), 0x4018_8000);
+uart!(LpUart3, LpUart3Tx, LpUart3Rx, (0, 6), 0x4018_C000);
+uart!(LpUart4, LpUart4Tx, LpUart4Rx, (1, 12), 0x4019_0000);
+uart!(LpUart5, LpUart5Tx, LpUart5Rx, (3, 1), 0x4019_4000);
+uart!(LpUart6, LpUart6Tx, LpUart6Rx, (3, 3), 0x4019_8000);
+uart!(LpUart7, LpUart7Tx, LpUart7Rx, (5, 13), 0x4019_C000);
+uart!(LpUart8, LpUart8Tx, LpUart8Rx, (6, 7), 0x401A_0000);

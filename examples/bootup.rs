@@ -15,17 +15,16 @@ pub extern "C" fn main() {
     let mut uart_clock = ccm.uart_clock_selector_mut().unwrap();
     uart_clock.set_input(ccm::UartClockInput::Oscillator);
     uart_clock.set_divisor(1);
-    let mut uart = ccm.enable::<lpuart::LpUart6>().unwrap();
 
-    unsafe {
-        // Set the pin for UART TX (alt mode 2 on GPIO_AD_B0_02)
-        let reg = 0x401F_80C4 as *mut u32;
-        core::ptr::write_volatile(reg, 2);
+    let iomux = ccm.enable::<iomuxc::Iomuxc>().unwrap();
+    let tx_pin = iomux
+        .get_pin::<iomuxc::pin::GpioAdB0_02>()
+        .unwrap()
+        .into_lpuart_tx();
 
-        // 24MHz / 2500 is a baudrate of 9600, using 10x oversample for recieve
-        uart.set_clocks(250, 10);
-        uart.enable();
-    };
+    let mut uart = ccm.enable::<lpuart::LpUart6<(), ()>>().unwrap();
+    uart.set_clocks(250, 10);
+    let mut uart = uart.set_tx(tx_pin).0;
 
     use core::fmt::Write;
     writeln!(&mut uart, "hello").unwrap();

@@ -795,7 +795,6 @@ impl Ccm {
             (3, 14), // ocram
             (3, 15), // iomuxc_snvs_gpr
             (4, 0),  // sim_m7_mainclk_r
-            (4, 1),  // iomuxc
             (4, 2),  // iomuxc_gpr
             (4, 3),  // bee
             (4, 4),  // sim_m7
