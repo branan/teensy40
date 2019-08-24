@@ -170,6 +170,9 @@ pub enum ClockError {
     /// Indicates that the clock gate configuration would lead to a
     /// peripheral being overclocked.
     TooFast,
+    /// Indicates that the clock gate configuration would point a
+    /// peripheral at a disabled PLL.
+    Disabled,
 }
 
 /// The clock source used by the [`PRE_PERIPH_CLK_SEL`

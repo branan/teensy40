@@ -42,13 +42,15 @@ macro_rules! uart {
                         //
                         // We also need to ensure the USB PLL is
                         // enabled if it's our clock source.
-                        if (ccm.usb1_pll().multiplier() == PeripheralPllMultiplier::Twenty
-                            || ccm.uart_clock_selector().divisor() > 1)
-                            && ccm.usb1_pll().enabled()
-                        {
-                            Ok(())
+                        if !ccm.usb1_pll().enabled() {
+                            Err(ClockError::Disabled)
                         } else {
-                            Err(ClockError::TooFast)
+                            if ccm.usb1_pll().multiplier() == PeripheralPllMultiplier::TwentyTwo
+                            && ccm.uart_clock_selector().divisor() == 1 {
+                                Err(ClockError::TooFast)
+                            } else {
+                                Ok(())
+                            }
                         }
                     }
                 }
