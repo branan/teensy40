@@ -8,8 +8,6 @@ use teensy40::*;
 
 #[no_mangle]
 pub extern "C" fn main() {
-    unsafe { debug::enable() }
-
     let mut ccm = ccm::Ccm::new();
 
     let mut uart_clock = ccm.uart_clock_selector_mut().unwrap();
@@ -29,11 +27,6 @@ pub extern "C" fn main() {
     use core::fmt::Write;
     writeln!(&mut uart, "hello").unwrap();
 
-    unsafe {
-        // Indicate we made it successfully to the end
-        debug::pin12();
-    }
-
     // Sleep forever
     loop {
         unsafe {
@@ -46,6 +39,7 @@ pub extern "C" fn main() {
 fn teensy_panic(_: &core::panic::PanicInfo) -> ! {
     // Enable the pin
     unsafe {
+        debug::enable();
         debug::led();
         loop {
             asm!("wfi" :::: "volatile");

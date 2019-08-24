@@ -180,6 +180,7 @@ pub extern "C" fn main() {
 fn teensy_panic(_: &core::panic::PanicInfo) -> ! {
     // Enable the pin
     unsafe {
+        debug::enable();
         debug::led();
         loop {
             asm!("wfi" :::: "volatile");
