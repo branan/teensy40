@@ -30,6 +30,8 @@ macro_rules! uart {
             rx: R,
         }
 
+        pub type $short_name = $name<(), ()>;
+
         /// This is a marker trait to indicate that a pin can be used
         /// to transmit via this UART
         pub trait $tx_pin {}
@@ -182,11 +184,11 @@ macro_rules! uart {
     };
 }
 
-uart!(LpUart1, LpUart1Tx, LpUart1Rx, (5, 12), 0x4018_4000);
-uart!(LpUart2, LpUart2Tx, LpUart2Rx, (0, 14), 0x4018_8000);
-uart!(LpUart3, LpUart3Tx, LpUart3Rx, (0, 6), 0x4018_C000);
-uart!(LpUart4, LpUart4Tx, LpUart4Rx, (1, 12), 0x4019_0000);
-uart!(LpUart5, LpUart5Tx, LpUart5Rx, (3, 1), 0x4019_4000);
-uart!(LpUart6, LpUart6Tx, LpUart6Rx, (3, 3), 0x4019_8000);
-uart!(LpUart7, LpUart7Tx, LpUart7Rx, (5, 13), 0x4019_C000);
-uart!(LpUart8, LpUart8Tx, LpUart8Rx, (6, 7), 0x401A_0000);
+uart!(LpUart1, Uart1, LpUart1Tx, LpUart1Rx, (5, 12), 0x4018_4000);
+uart!(LpUart2, Uart2, LpUart2Tx, LpUart2Rx, (0, 14), 0x4018_8000);
+uart!(LpUart3, Uart3, LpUart3Tx, LpUart3Rx, (0, 6), 0x4018_C000);
+uart!(LpUart4, Uart4, LpUart4Tx, LpUart4Rx, (1, 12), 0x4019_0000);
+uart!(LpUart5, Uart5, LpUart5Tx, LpUart5Rx, (3, 1), 0x4019_4000);
+uart!(LpUart6, Uart6, LpUart6Tx, LpUart6Rx, (3, 3), 0x4019_8000);
+uart!(LpUart7, Uart7, LpUart7Tx, LpUart7Rx, (5, 13), 0x4019_C000);
+uart!(LpUart8, Uart8, LpUart8Tx, LpUart8Rx, (6, 7), 0x401A_0000);

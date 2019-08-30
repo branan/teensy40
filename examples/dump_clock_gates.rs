@@ -153,7 +153,7 @@ pub extern "C" fn main() {
         .unwrap()
         .into_lpuart_tx();
 
-    let mut uart = ccm.enable::<lpuart::LpUart6<(), ()>>().unwrap();
+    let mut uart = ccm.enable::<lpuart::Uart6>().unwrap();
     uart.set_clocks(250, 10);
     let mut uart = uart.set_tx(tx_pin).0;
 
