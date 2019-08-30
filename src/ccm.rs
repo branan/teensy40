@@ -142,7 +142,7 @@ pub struct PeriphClockSelector<CCM> {
     ccm: CCM,
 }
 
-/// The 'UART_CLK_SEL` clock mux.
+/// The `UART_CLK_SEL` clock mux.
 ///
 /// This mux selects the output of either the USB PLL 24MHz oscillator
 /// as the clock source for the UARTs. See [the associated
@@ -473,6 +473,7 @@ where
 {
     /// Set the clock source used for this mux.
     pub fn set_input(&mut self, input: PeriphClockInput) {
+        // TODO: Verify clock speeds for downstream blocks.
         unsafe {
             self.ccm.regs.cbcdr.update(|r| {
                 // cbcdr[periph_clk_sel]
@@ -654,7 +655,7 @@ impl Ccm {
         }
     }
 
-    /// Get the [USB1 PLL](Usb1Pll) immutably
+    /// Get the [USB1_PLL](Usb1Pll) immutably
     pub fn usb1_pll(&self) -> Usb1Pll<&Self> {
         Usb1Pll { ccm: self }
     }

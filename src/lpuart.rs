@@ -1,3 +1,8 @@
+//! Low Power Universal Asynchronous Receiver / Transmitter
+//!
+//! The `LPUART` modules in the i.MX RT1062 provide the most basic
+//! serial data transfer.
+
 use bit_field::BitField;
 use volatile::{ReadOnly, Volatile};
 
@@ -18,19 +23,31 @@ struct LpUartRegs {
 }
 
 macro_rules! uart {
-    ($name:ident, $tx_pin:ident, $rx_pin:ident, $gate:expr, $addr:expr) => {
+    ($name:ident, $short_name:ident, $tx_pin:ident, $rx_pin:ident, $gate:expr, $addr:expr) => {
         pub struct $name<T, R> {
             regs: &'static mut LpUartRegs,
             tx: T,
             rx: R,
         }
 
+        /// This is a marker trait to indicate that a pin can be used
+        /// to transmit via this UART
         pub trait $tx_pin {}
+
+        /// This is a marker trait to indicate that a pin can be used
+        /// to recieve via this UART.
         pub trait $rx_pin {}
 
         impl super::ccm::ClockGated for $name<(), ()> {
             const GATE: (usize, usize) = $gate;
 
+            /// For a UART, the final clock frequency must be at most
+            /// 80MHz. If the selected clock is the 24MHz oscillator,
+            /// this is always true. If it is the USB1 PLL, we must
+            /// ensure we have a correct divisor as well.
+            ///
+            /// To set the clock source and divider, use the
+            /// [`UART_CLK_SEL` mux](../ccm/UartClockSelector)
             fn check_clock(ccm: &super::ccm::Ccm) -> Result<(), super::ccm::ClockError> {
                 use super::ccm::{ClockError, PeripheralPllMultiplier, UartClockInput};
 
@@ -76,6 +93,9 @@ macro_rules! uart {
 
         impl $name<(), ()> {
             /// Set the baud rate
+            ///
+            /// This can only be done for a UART which has not had has
+            /// a TX or RX pin assigned.
             pub fn set_clocks(&mut self, divisor: u32, oversample: u32) {
                 unsafe {
                     self.regs.baud.update(|r| {
@@ -88,6 +108,12 @@ macro_rules! uart {
         }
 
         impl<T, R> $name<T, R> {
+            /// Set the transmit pin
+            ///
+            /// This updates the typestate of this UART to indicate
+            /// that it is enabled for transmit. Being enabled for
+            /// transmit allows sending data, and blocks updating the
+            /// baud rate.
             pub fn set_tx<Tx>(self, tx: Tx) -> ($name<Tx, R>, T)
             where
                 Tx: $tx_pin,
@@ -106,6 +132,11 @@ macro_rules! uart {
                 ($name { regs, tx, rx }, old_tx)
             }
 
+            /// Set the recieve pin
+            ///
+            /// This updates the typestate of thsi UART to indicate
+            /// that it is enabled for recieve. Recieve is
+            /// unimplemented.
             pub fn set_rx<Rx>(self, rx: Rx) -> ($name<T, Rx>, R)
             where
                 Rx: $rx_pin,
@@ -121,6 +152,11 @@ macro_rules! uart {
         where
             T: $tx_pin,
         {
+            /// Send a byte of data across this UART
+            ///
+            /// This can only be done once a transmit pin has been
+            /// set. This method will block until the UART has
+            /// completed transmission of the byte.
             pub fn send(&mut self, byte: u8) {
                 unsafe {
                     self.regs.data.write(u32::from(byte));

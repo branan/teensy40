@@ -12,8 +12,12 @@
 //!
 //! use teensy40::{
 //!    ccm::Ccm,
+//!    iomuxc::Iomuxc
+//!    iomuxc::pin
+//!    lpuart::LpUart6
 //!    debug,
 //! };
+//! use core::fmt::Write;
 //!
 //! unsafe fn sleep() -> ! {
 //!     loop {
@@ -23,11 +27,25 @@
 //!
 //! #[no_mangle]
 //! pub extern "C" fn main() {
-//!     unsafe { debug::enable() }
 //!     let mut ccm = Ccm::new();
+//!
+//!     let mut uart_clock = ccm.uart_clock_selector_mut().unwrap();
+//!     uart_clock.set_input(ccm::UartClockInput::Oscillator);
+//!     uart_clock.set_divisor(1);
+//!
+//!     let iomux = ccm.enable::<iomuxc::Iomuxc>().unwrap();
+//!     let tx_pin = iomux
+//!         .get_pin::<iomuxc::pin::GpioAdB0_02>()
+//!         .unwrap()
+//!         .into_lpuart_tx();
+//!
+//!     let mut uart = ccm.enable::<lpuart::LpUart6<(), ()>>().unwrap();
+//!     uart.set_clocks(250, 10);
+//!     let mut uart = uart.set_tx(tx_pin).0;
+//!
+//!     writeln!(&mut uart, "hello").unwrap();
+//!
 //!     unsafe {
-//!         ccm.sanitize();
-//!         debug::pin12();
 //!         sleep();
 //!     }
 //! }
@@ -35,6 +53,7 @@
 //! #[panic_handler]
 //! fn teensy_panic(_: &core::panic::PanicInfo) -> ! {
 //!     unsafe {
+//!         debug::enable();
 //!         debug::led();
 //!         sleep();
 //!     }

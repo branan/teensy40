@@ -11,11 +11,14 @@ feature.
 ## Limitations
 
 * Code runs only off of flash (as does `.rodata`)
-* Pretty much no abstractions - most registers must be accessed
-  directly via pointers
 * No `.data` section, since we cannot copy the initialization data in
   yet
 * Cannot be used as a dependency crate
+
+## Capabilities
+
+Currently, this crate can bring up the microcontroller sufficiently to
+send messages over a UART.
 
 ## Dependencies
 
@@ -45,7 +48,6 @@ built for them. These will likely be similar to [what I did for Teensy
 3.2](https://github.com/branan/teensy), where it makes sense.
 
 * GPIO
-* UART
 * CCM
 * SPI
 * USB (especially USB serial for debugging)
